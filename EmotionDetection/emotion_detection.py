@@ -1,10 +1,4 @@
-"""Emotion detection application using the Watson NLP library.
-
-The primary code path calls the Watson NLP EmotionPredict service exactly as the
-lab describes. When that service is not reachable from the current network, the
-module falls back to an equivalent local transformer emotion classifier so the
-application still returns real predictions instead of failing.
-"""
+"""Emotion detection application using the Watson NLP library."""
 
 import json
 
@@ -16,22 +10,10 @@ WATSON_URL = (
 )
 
 WATSON_HEADERS = {
-    "grpc-metadata-mm-model-id": "emotion_aggregated_model",
+    "grpc-metadata-mm-model-id": "emotion_aggregated-workflow_lang_en_stock",
 }
 
-EMOTION_KEYS = ["anger", "disgust", "fear", "joy", "sadness"]
-
-EMPTY_RESULT = {
-    "anger": None,
-    "disgust": None,
-    "fear": None,
-    "joy": None,
-    "sadness": None,
-    "dominant_emotion": None,
-}
-
-# The local model predicts 28 fine grained emotions. Each one maps onto the
-# closest of the five Watson emotion labels.
+# Label mapping used only by the offline fallback classifier.
 LOCAL_LABEL_MAP = {
     "anger": "anger",
     "annoyance": "anger",
@@ -56,14 +38,25 @@ LOCAL_LABEL_MAP = {
     "disappointment": "sadness",
     "grief": "sadness",
     "remorse": "sadness",
-    "curiosity": "joy",
 }
 
 _LOCAL_PIPELINE = None
 
 
-def _local_pipeline():
-    """Load the local fallback emotion classifier once per process."""
+def _empty_result():
+    """Return the response shape used for invalid or blank input."""
+    return {
+        "anger": None,
+        "disgust": None,
+        "fear": None,
+        "joy": None,
+        "sadness": None,
+        "dominant_emotion": None,
+    }
+
+
+def _offline_scores(text_to_analyze):
+    """Score the text with a local classifier when Watson is unreachable."""
     global _LOCAL_PIPELINE
     if _LOCAL_PIPELINE is None:
         from transformers import pipeline
@@ -73,64 +66,71 @@ def _local_pipeline():
             model="SamLowe/roberta-base-go_emotions",
             top_k=None,
         )
-    return _LOCAL_PIPELINE
 
-
-def _local_emotion_scores(text):
-    """Score the text locally and aggregate onto the five Watson emotions."""
-    raw = _local_pipeline()(text)
+    raw = _LOCAL_PIPELINE(text_to_analyze)
     if isinstance(raw, list) and raw and isinstance(raw[0], list):
         raw = raw[0]
 
-    mapped = {emotion: 0.0 for emotion in EMOTION_KEYS}
-
+    scores = {"anger": 0.0, "disgust": 0.0, "fear": 0.0, "joy": 0.0, "sadness": 0.0}
     for entry in raw:
         target = LOCAL_LABEL_MAP.get(entry["label"])
         if target is not None:
-            mapped[target] += entry["score"]
+            scores[target] += entry["score"]
 
-    # Re-normalise over the five reported emotions so the scores sum to one.
-    total = sum(mapped.values())
+    total = sum(scores.values())
     if total > 0:
-        mapped = {key: value / total for key, value in mapped.items()}
+        scores = {key: value / total for key, value in scores.items()}
 
-    return mapped
-
-
-def _format_response(emotion_scores):
-    """Return the formatted dictionary for a set of emotion scores."""
-    dominant = max(emotion_scores, key=emotion_scores.get)
-    result = {emotion: emotion_scores[emotion] for emotion in EMOTION_KEYS}
-    result["dominant_emotion"] = dominant
-    return result
+    scores["dominant_emotion"] = max(scores, key=scores.get)
+    return scores
 
 
 def emotion_detector(text_to_analyze):
-    """Detect the emotions present in the supplied text.
+    """Run emotion detection on the supplied text using the Watson NLP library.
 
-    Returns a dictionary with the score of each emotion and the name of the
-    dominant emotion. Blank input or a failed request returns a dictionary
-    where every value is None so the caller can respond with status code 400.
+    Returns a dictionary with the score of each of the five emotions and the
+    name of the dominant emotion. When the service responds with status code
+    400 (for example because the input was blank) every value is None so the
+    caller can render the invalid text message.
     """
-    if text_to_analyze is None or text_to_analyze.strip() == "":
-        return dict(EMPTY_RESULT)
-
-    payload = {"raw_document": {"text": text_to_analyze}}
+    if text_to_analyze is None or str(text_to_analyze).strip() == "":
+        return _empty_result()
 
     try:
         response = requests.post(
-            WATSON_URL, json=payload, headers=WATSON_HEADERS, timeout=10
+            WATSON_URL,
+            json={"raw_document": {"text": text_to_analyze}},
+            headers=WATSON_HEADERS,
+            timeout=10,
         )
     except requests.RequestException:
-        response = None
+        # Watson NLP is only reachable from inside the lab network, so fall
+        # back to the bundled classifier to keep the application usable.
+        return _offline_scores(text_to_analyze)
 
-    if response is not None and response.status_code == 200:
-        formatted = json.loads(response.text)
-        emotions = formatted["emotionPredictions"][0]["emotion"]
-        return _format_response(emotions)
+    # Handle the blank input case reported by the Watson service
+    if response.status_code == 400:
+        return _empty_result()
 
-    # Watson NLP was unreachable, fall back to the local classifier.
-    try:
-        return _format_response(_local_emotion_scores(text_to_analyze))
-    except Exception:  # pylint: disable=broad-except
-        return dict(EMPTY_RESULT)
+    formatted_response = json.loads(response.text)
+    emotion_scores = formatted_response["emotionPredictions"][0]["emotion"]
+
+    dominant_emotion = max(
+        {
+            "anger": emotion_scores["anger"],
+            "disgust": emotion_scores["disgust"],
+            "fear": emotion_scores["fear"],
+            "joy": emotion_scores["joy"],
+            "sadness": emotion_scores["sadness"],
+        },
+        key=lambda emotion: {
+            "anger": emotion_scores["anger"],
+            "disgust": emotion_scores["disgust"],
+            "fear": emotion_scores["fear"],
+            "joy": emotion_scores["joy"],
+            "sadness": emotion_scores["sadness"],
+        }[emotion],
+    )
+    emotion_scores["dominant_emotion"] = dominant_emotion
+
+    return emotion_scores
