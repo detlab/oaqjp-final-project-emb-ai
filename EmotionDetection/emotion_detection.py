@@ -30,6 +30,35 @@ EMPTY_RESULT = {
     "dominant_emotion": None,
 }
 
+# The local model predicts 28 fine grained emotions. Each one maps onto the
+# closest of the five Watson emotion labels.
+LOCAL_LABEL_MAP = {
+    "anger": "anger",
+    "annoyance": "anger",
+    "disapproval": "anger",
+    "disgust": "disgust",
+    "embarrassment": "disgust",
+    "fear": "fear",
+    "nervousness": "fear",
+    "joy": "joy",
+    "amusement": "joy",
+    "approval": "joy",
+    "excitement": "joy",
+    "gratitude": "joy",
+    "love": "joy",
+    "optimism": "joy",
+    "pride": "joy",
+    "relief": "joy",
+    "admiration": "joy",
+    "caring": "joy",
+    "desire": "joy",
+    "sadness": "sadness",
+    "disappointment": "sadness",
+    "grief": "sadness",
+    "remorse": "sadness",
+    "curiosity": "joy",
+}
+
 _LOCAL_PIPELINE = None
 
 
@@ -41,27 +70,24 @@ def _local_pipeline():
 
         _LOCAL_PIPELINE = pipeline(
             "text-classification",
-            model="j-hartmann/emotion-english-distilroberta-base",
+            model="SamLowe/roberta-base-go_emotions",
             top_k=None,
         )
     return _LOCAL_PIPELINE
 
 
 def _local_emotion_scores(text):
-    """Score the text with the local classifier and map to the five Watson keys."""
+    """Score the text locally and aggregate onto the five Watson emotions."""
     raw = _local_pipeline()(text)
     if isinstance(raw, list) and raw and isinstance(raw[0], list):
         raw = raw[0]
 
-    scores = {label: score for label, score in ((r["label"], r["score"]) for r in raw)}
+    mapped = {emotion: 0.0 for emotion in EMOTION_KEYS}
 
-    mapped = {
-        "anger": scores.get("anger", 0.0),
-        "disgust": scores.get("disgust", 0.0),
-        "fear": scores.get("fear", 0.0),
-        "joy": scores.get("joy", 0.0),
-        "sadness": scores.get("sadness", 0.0),
-    }
+    for entry in raw:
+        target = LOCAL_LABEL_MAP.get(entry["label"])
+        if target is not None:
+            mapped[target] += entry["score"]
 
     # Re-normalise over the five reported emotions so the scores sum to one.
     total = sum(mapped.values())
