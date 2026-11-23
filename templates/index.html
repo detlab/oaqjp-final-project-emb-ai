@@ -1,0 +1,42 @@
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+    <script src="/static/mywebscript.js"></script>
+    <style>
+        .center-heading {
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="card-body">
+            <h1 class="center-heading">NLP - Emotion Detection</h1>
+
+            <form action="/" method="get">
+                <div style="padding: 25px 25px 5px 25px;">
+                    <h2 class="mb-3">
+                        <label class="form-label" for="textToAnalyze">Please enter the text to be analyzed</label>
+                    </h2>
+                    <input type="text" class="form-control" id="textToAnalyze" name="textToAnalyze" value="{{ text_to_analyze }}">
+                </div>
+
+                <div style="padding: 5px 25px 25px 25px;">
+                    <button type="submit" class="btn btn-secondary">Run Sentiment Analysis</button>
+                </div>
+            </form>
+
+            <div style="padding: 5px 25px 25px 25px;">
+                <h2 class="mb-3">
+                    <label class="form-label">Result of Emotion Detection</label>
+                </h2>
+
+                <div id="system_response" style="padding: 15px 15px 15px 15px;">
+                    {% if error_text %}{{ error_text }}{% elif result_text %}{{ result_text }}{% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
